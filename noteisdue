@@ -1,0 +1,323 @@
+#!/usr/bin/perl -w
+
+use strict;
+
+package Notes::Comment;
+	use strict;
+        use feature 'signatures';
+        no warnings 'experimental::signatures';
+
+
+	sub new($class, $update) {
+		my $self=$update;
+		bless($self, $class);
+		return $self;
+	}
+	
+	sub date($self) {
+		return $self->{date};
+	}
+
+	sub user($self) {
+		return $self->{user};
+	}
+
+	sub text($self) {
+		return $self->{text};
+	}
+
+1;
+
+package Notes::Noteupdate;
+        use strict;
+        use feature 'signatures';
+        no warnings 'experimental::signatures';
+
+	sub new($class, $update) {
+		my $self=$update;
+		bless($self, $class);
+		return $self;
+	}
+
+	sub id($self) {
+		return $self->{properties}{id};
+	}
+
+	sub comments($self) {
+
+		return map { new Notes::Comment($_) } @{$self->{properties}{comments}};
+	}
+1;
+
+package Notes::API;
+        use strict;
+        use LWP::UserAgent;
+	use URI::Encode qw/uri_encode/;
+	use Data::Dumper;
+	use HTTP::Request::Common;
+        use JSON;
+        use feature 'signatures';
+        no warnings 'experimental::signatures';
+
+	sub new($class, $api) {
+
+		my $ua=LWP::UserAgent->new();
+
+		#$ua->add_handler("request_send",  sub { shift->dump; return });
+		#$ua->add_handler("response_done", sub { shift->dump; return });
+
+		my $self = {
+			ua => $ua,
+			uri => $api->{uri},
+			username => $api->{username},
+			password => $api->{password}
+		};
+
+		bless($self, $class);
+
+		return $self;
+	}
+
+	sub fetch($self, $left, $bottom, $right, $top) {
+		my $uri=sprintf("%s/notes/?bbox=%f,%f,%f,%f&format=json",
+			$self->{uri}, $left, $bottom, $right, ${top});
+
+		my $request=GET $uri;
+		$request->authorization_basic($self->{username}, $self->{password});
+
+		my $response=$self->{ua}->request($request);
+
+		if (!$response->is_success()) {
+			return undef;
+		}
+
+		my $data=from_json($response->decoded_content);
+
+		my @updates=map { new Notes::Noteupdate($_) } @{$data->{features}};
+
+		return \@updates;
+	}
+
+	use URI::Encode;
+
+	sub note_close($self, $noteid, $comment) {
+		my $uri=sprintf("%s/notes/%d/close?text=%s",
+			$self->{uri}, $noteid, uri_encode($comment));
+
+		my $request=POST $uri;
+		$request->authorization_basic($self->{username}, $self->{password});
+		my $response=$self->{ua}->request($request);
+
+		if (!$response->is_success()) {
+			return undef;
+		}
+
+		return $response->decoded_content();
+	}
+
+	sub note_reopen($self, $noteid) {
+		my $uri=sprintf("%s/notes/%d/reopen",
+			$self->{uri}, $noteid);
+
+		my $request=POST $uri;
+		$request->authorization_basic($self->{username}, $self->{password});
+		my $response=$self->{ua}->request($request);
+
+		if (!$response->is_success()) {
+			return undef;
+		}
+
+		return $response->decoded_content();
+	}
+
+	sub note_comment($self, $noteid, $comment) {
+		my $uri=sprintf("%s/notes/%d/comment?text=%s",
+			$self->{uri}, $noteid, uri_encode($comment));
+
+		my $request=POST $uri;
+		$request->authorization_basic($self->{username}, $self->{password});
+		my $response=$self->{ua}->request($request);
+
+		if (!$response->is_success()) {
+			return undef;
+		}
+
+		return $response->decoded_content();
+	}
+1;
+
+package Notes::Database::Note;
+   	use strict;
+        use feature 'signatures';
+        no warnings 'experimental::signatures';
+
+	sub new($class, $dbh, $row) {
+
+		my $self={
+			row=>$row,
+			dbh=>$dbh
+		};
+		bless($self, $class);
+
+		return $self;
+	}
+
+	sub id($self) {
+		return $self->{row}{noteid};
+	}
+
+	sub done($self) {
+		my $sql=$self->{dbh}->prepare("update notes set reopened = true where id = ?");
+		$sql->execute($self->{row}{id});
+		$sql->finish();
+	}
+1;
+
+package Notes::Database;
+
+   	use strict;
+        use LWP::UserAgent;
+        use JSON;
+        use feature 'signatures';
+        no warnings 'experimental::signatures';
+
+	sub new($class, $dbconfig) {
+		my $self=$dbconfig;
+		bless($self, $class);
+
+		$self->connect();
+
+		return $self;
+	}
+
+	sub connect($self) {
+
+		my $dbh = DBI->connect($self->{host}, $self->{username}, $self->{password}) or die $DBI::errstr;
+		$dbh->{pg_enable_utf8} = 1;
+
+		$self->{dbh}=$dbh;
+	}
+
+	sub notereopenexists($self, $noteid, $commenttimestamp) {
+		my $sql=$self->{dbh}->prepare("select id from notes where noteid = ? and commenttimestamp = to_timestamp(?)") || die $DBI::errstr;
+		$sql->execute($noteid, $commenttimestamp);
+		my $row=$sql->fetchrow();
+		$sql->finish();
+
+		return defined($row);
+	}
+
+	sub addnotereopen($self, $noteid, $reopentimestamp, $commenttimestamp) {
+		if (notereopenexists($self, $noteid, $commenttimestamp)) {
+			printf("%20s Already in database\n", $noteid);
+			return 0;	
+		}
+
+		my $sql=$self->{dbh}->prepare("insert into notes ( noteid, due, commenttimestamp ) values ( ?, to_timestamp(?), to_timestamp(?) )") || die $DBI::errstr;
+		my $err=$sql->execute($noteid, $reopentimestamp, $commenttimestamp);
+		$sql->finish();
+
+		return $err // 0;
+	}
+
+	sub duenotes($self) {
+		my $sql=$self->{dbh}->prepare("select id, noteid, due from notes where reopened = false and due < 'now'::timestamp") || die $DBI::errstr;
+		my $err=$sql->execute();
+
+		my @notes;
+		while(my $row=$sql->fetchrow_hashref()) {
+			push @notes, new Notes::Database::Note($self->{dbh}, $row);
+		}
+
+		$sql->finish();
+
+		return \@notes;
+	}
+
+
+1;
+
+use strict;
+use feature 'signatures';
+use Data::Dumper;
+use Getopt::Long::Descriptive;
+use File::Slurp;
+use List::Util;
+use Date::Manip qw/ParseDate/;
+use FindBin qw/$Bin/;
+use DBI;
+
+sub updatefromapi($config, $a, $d) {
+	my $updates=$a->fetch(
+		$config->{bbox}{left},
+		$config->{bbox}{bottom},
+		$config->{bbox}{right},
+		$config->{bbox}{top});
+
+	foreach my $update ( @{$updates} ) {
+		foreach my $comment ( $update->comments() ) {
+
+			my $user=$comment->user();
+			next if (!defined($user) || $user eq '');
+
+			# Allowed user list?
+			if (!scalar grep { $user eq $_ } @{$config->{users}}) {
+				next;
+			}
+
+			my $text=$comment->text();
+			next if (!defined($text));
+
+			my @lines=split(/\n/, $text);
+
+			# No comments - nothing to process
+			next if (scalar @lines == 0);
+
+			if ($lines[0] =~ /reopen:\s*(.+)$/) {
+				my $datestring=$1;
+				my $dm=new Date::Manip::Date;
+				my $err=$dm->parse($1);
+
+				next if ($err);
+
+				my $reopentimestamp=$dm->secs_since_1970_GMT();
+
+				$err=$dm->parse($comment->date());
+				my $commenttimestamp=$dm->secs_since_1970_GMT();
+
+				printf("%20s found reopen %s %s\n", $update->id(), $datestring, $comment->date());
+
+				if ($d->addnotereopen($update->id(), $reopentimestamp, $commenttimestamp)) {
+					$a->note_close($update->id(), "Will be reopened");
+				}
+			}
+		}
+	}
+}
+
+sub reopenifdue($config, $a, $d) {
+	my $notes=$d->duenotes();
+
+	foreach my $note ( @{$notes} ) {
+		printf("%20s Reopening\n", $note->id());
+		$a->note_reopen($note->id());
+		$note->done();
+	}
+
+}
+
+my ($opt, $usage) = describe_options(
+	'$Bin %o <some-arg>',
+	[ 'configfile=s',	"Config filename", { default => "noteisdueconfig.json" } ],
+	[],
+	[ 'help',               "print usage message and exit", { shortcircuit => 1 } ],
+);
+
+my $config=from_json(read_file($opt->configfile));
+
+my $a=new Notes::API($config->{api});
+my $d=new Notes::Database($config->{dbconfig});
+
+updatefromapi($config, $a, $d);
+reopenifdue($config, $a, $d);
+

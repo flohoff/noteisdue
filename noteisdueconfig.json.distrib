@@ -1,0 +1,19 @@
+{
+	"dbconfig": {
+		"host": "dbi:Pg:dbname=noteisdue;host=localhost",
+		"username": "<dbusername>",
+		"password": "<dbpassword>"
+	},
+	"bbox": {
+		"left": "6",
+		"bottom": "49",
+		"right": "9",
+		"top": "53"
+	},
+	"users": [ "flohoff" ],
+	"api": {
+		"username": "<myosmusername>",
+		"password": "<myosmpassword>",
+		"uri": "https://api.openstreetmap.org/api/0.6"
+	}
+}
