@@ -11,6 +11,18 @@ the due time has expired.
 
 It needs to run regularly from cron
 
+# Time spec format
+
+**noteisdue** uses perls **Date::Manip** parser. It understands absolute and
+relative timespecs as 
+
+	next month
+	3 months
+	24 hours
+	2024-01-01
+
+and the like.
+
 # Database
 
 The tool currently uses a postgres database for persisting note IDs and their due timestamp:
