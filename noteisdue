@@ -69,6 +69,7 @@ package Notes::API;
 		my $self = {
 			ua => $ua,
 			uri => $api->{uri},
+			limit => $api->{limit} // 100,
 			username => $api->{username},
 			password => $api->{password}
 		};
@@ -79,8 +80,27 @@ package Notes::API;
 	}
 
 	sub fetch($self, $left, $bottom, $right, $top) {
-		my $uri=sprintf("%s/notes/?bbox=%f,%f,%f,%f&format=json",
-			$self->{uri}, $left, $bottom, $right, ${top});
+		my $area=($top-$bottom)*($right-$left);
+
+		printf("Fetching notes in bbox %f, %f, %f, %f area %f\n", $left, $bottom, $right, $top, $area);
+
+		# If the area is to large split it down
+		if ($area > 25) {
+			my $xmid=$left+($right-$left)/2;
+			my $ymid=$bottom+($top-$bottom)/2;
+
+			my @notes;
+
+			push @notes, @{$self->fetch($left, $ymid, $xmid, $top)};
+			push @notes, @{$self->fetch($xmid, $ymid, $right, $top)};
+			push @notes, @{$self->fetch($left, $bottom, $xmid, $ymid)};
+			push @notes, @{$self->fetch($xmid, $bottom, $right, $ymid)};
+
+			return \@notes;
+		}
+
+		my $uri=sprintf("%s/notes/?bbox=%f,%f,%f,%f&format=json&limit=%d",
+			$self->{uri}, $left, $bottom, $right, ${top}, $self->{limit});
 
 		my $request=GET $uri;
 		$request->authorization_basic($self->{username}, $self->{password});
@@ -94,6 +114,8 @@ package Notes::API;
 		my $data=from_json($response->decoded_content);
 
 		my @updates=map { new Notes::Noteupdate($_) } @{$data->{features}};
+
+		printf("Fetched %d notes in bbox %f, %f, %f, %f area %f\n", scalar @updates, $left, $bottom, $right, $top, $area);
 
 		return \@updates;
 	}

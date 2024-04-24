@@ -14,6 +14,7 @@
 	"api": {
 		"username": "<myosmusername>",
 		"password": "<myosmpassword>",
-		"uri": "https://api.openstreetmap.org/api/0.6"
+		"uri": "https://api.openstreetmap.org/api/0.6",
+		"limit": 100
 	}
 }
