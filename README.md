@@ -1,15 +1,18 @@
 
 # Purpose
 
-This tool automatically closes notes of selected users in a selected
-bounding box when they add a:
+Notes do not support notification or reopening after time. So this
+bot does it.
 
-	reopen: <time spec>
+There are currently these commands supported:
 
-to their OpenStreetmap Note and will later reopen them once
-the due time has expired.
-
-It needs to run regularly from cron
+* reopen: <time spec>
+  Closes the note on the next run with a message that it will be reopened.
+  Reopens the note when the timespec has been reached.
+* notify: <time spec>
+  Does not do anything when finding the notes comment but notifies
+  with
+  "User flohoff requested a notification"
 
 # Time spec format
 
@@ -18,6 +21,7 @@ relative timespecs as
 
 	next month
 	3 months
+	3 weeks
 	24 hours
 	2024-01-01
 
@@ -34,6 +38,8 @@ The tool currently uses a postgres database for persisting note IDs and their du
 	    due timestamp without time zone NOT NULL,
 	    reopened boolean DEFAULT false,
 	    commenttimestamp timestamp without time zone NOT NULL
+	    action character varying DEFAULT 'reopen'::character varying,
+	    username character varying
 	);
 
 	ALTER TABLE ONLY public.notes
