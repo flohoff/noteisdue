@@ -166,6 +166,14 @@ package Notes::Database::Note;
 		return $self->{row}{noteid};
 	}
 
+	sub action($self) {
+		return $self->{row}{action};
+	}
+
+	sub username($self) {
+		return $self->{row}{username};
+	}
+
 	sub done($self) {
 		my $sql=$self->{dbh}->prepare("update notes set reopened = true where id = ?");
 		$sql->execute($self->{row}{id});
@@ -198,7 +206,7 @@ package Notes::Database;
 		$self->{dbh}=$dbh;
 	}
 
-	sub notereopenexists($self, $noteid, $commenttimestamp) {
+	sub noteexists($self, $noteid, $commenttimestamp) {
 		my $sql=$self->{dbh}->prepare("select id from notes where noteid = ? and commenttimestamp = to_timestamp(?)") || die $DBI::errstr;
 		$sql->execute($noteid, $commenttimestamp);
 		my $row=$sql->fetchrow();
@@ -207,21 +215,34 @@ package Notes::Database;
 		return defined($row);
 	}
 
-	sub addnotereopen($self, $noteid, $reopentimestamp, $commenttimestamp) {
-		if (notereopenexists($self, $noteid, $commenttimestamp)) {
+	sub addnotereopen($self, $noteid, $reopentimestamp, $commenttimestamp, $user) {
+		if (noteexists($self, $noteid, $commenttimestamp)) {
 			printf("%20s Already in database\n", $noteid);
 			return 0;	
 		}
 
-		my $sql=$self->{dbh}->prepare("insert into notes ( noteid, due, commenttimestamp ) values ( ?, to_timestamp(?), to_timestamp(?) )") || die $DBI::errstr;
-		my $err=$sql->execute($noteid, $reopentimestamp, $commenttimestamp);
+		my $sql=$self->{dbh}->prepare("insert into notes ( noteid, due, commenttimestamp, action, username) values ( ?, to_timestamp(?), to_timestamp(?), 'reopen', ? )") || die $DBI::errstr;
+		my $err=$sql->execute($noteid, $reopentimestamp, $commenttimestamp, $user);
+		$sql->finish();
+
+		return $err // 0;
+	}
+
+	sub addnotenotify($self, $noteid, $reopentimestamp, $commenttimestamp, $user) {
+		if (noteexists($self, $noteid, $commenttimestamp)) {
+			printf("%20s Already in database\n", $noteid);
+			return 0;	
+		}
+
+		my $sql=$self->{dbh}->prepare("insert into notes ( noteid, due, commenttimestamp, action, username) values ( ?, to_timestamp(?), to_timestamp(?), 'notify', ? )") || die $DBI::errstr;
+		my $err=$sql->execute($noteid, $reopentimestamp, $commenttimestamp, $user);
 		$sql->finish();
 
 		return $err // 0;
 	}
 
 	sub duenotes($self) {
-		my $sql=$self->{dbh}->prepare("select id, noteid, due from notes where reopened = false and due < 'now'::timestamp") || die $DBI::errstr;
+		my $sql=$self->{dbh}->prepare("select id, noteid, due, action, username from notes where reopened = false and due < 'now'::timestamp") || die $DBI::errstr;
 		my $err=$sql->execute();
 
 		my @notes;
@@ -287,23 +308,43 @@ sub updatefromapi($config, $a, $d) {
 
 				printf("%20s found reopen %s %s\n", $update->id(), $datestring, $comment->date());
 
-				if ($d->addnotereopen($update->id(), $reopentimestamp, $commenttimestamp)) {
+				if ($d->addnotereopen($update->id(), $reopentimestamp, $commenttimestamp, $user)) {
 					$a->note_close($update->id(), "Will be reopened");
 				}
+			} elsif ($lines[0] =~ /notify:\s*(.+)$/) {
+				my $datestring=$1;
+				my $dm=new Date::Manip::Date;
+				my $err=$dm->parse($1);
+
+				next if ($err);
+
+				my $reopentimestamp=$dm->secs_since_1970_GMT();
+
+				$err=$dm->parse($comment->date());
+				my $commenttimestamp=$dm->secs_since_1970_GMT();
+
+				printf("%20s found notify %s %s\n", $update->id(), $datestring, $comment->date());
+
+				$d->addnotenotify($update->id(), $reopentimestamp, $commenttimestamp, $user);
 			}
 		}
 	}
 }
 
-sub reopenifdue($config, $a, $d) {
+sub actionifdue($config, $a, $d) {
 	my $notes=$d->duenotes();
 
 	foreach my $note ( @{$notes} ) {
-		printf("%20s Reopening\n", $note->id());
-		$a->note_reopen($note->id());
-		$note->done();
+		if ($note->action() eq 'reopen') {
+			printf("%20s Reopening\n", $note->id());
+			$a->note_reopen($note->id());
+			$note->done();
+		} elsif ($note->action() eq 'notify') {
+			printf("%20s notify\n", $note->id());
+			$a->note_comment($note->id(), sprintf("User %s requested a notification", $note->username()));
+			$note->done();
+		}
 	}
-
 }
 
 my ($opt, $usage) = describe_options(
@@ -319,5 +360,5 @@ my $a=new Notes::API($config->{api});
 my $d=new Notes::Database($config->{dbconfig});
 
 updatefromapi($config, $a, $d);
-reopenifdue($config, $a, $d);
+actionifdue($config, $a, $d);
 
