@@ -45,3 +45,10 @@ The tool currently uses a postgres database for persisting note IDs and their du
 	ALTER TABLE ONLY public.notes
 	    ADD CONSTRAINT unique_notes_id_commenttimestamp UNIQUE (noteid, commenttimestamp);
 
+# Authorization
+
+As `noteisdue` needs to use OAuth2 on first invocation noteisdue will present the authorization the user
+needs to open. After granting the authorization the user needs to copy the uri from the browser back to
+noteisdue.
+
+

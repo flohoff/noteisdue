@@ -50,33 +50,106 @@ package Notes::Noteupdate;
 1;
 
 package Notes::API;
-        use strict;
-        use LWP::UserAgent;
+	use strict;
+	use LWP::UserAgent;
+	use LWP::Authen::OAuth2;
 	use URI::Encode qw/uri_encode/;
 	use Data::Dumper;
 	use HTTP::Request::Common;
-        use JSON;
-        use feature 'signatures';
-        no warnings 'experimental::signatures';
+	use File::Slurp qw/read_file write_file/;
+	use List::Util qw/any/;
+	use FindBin qw/$Bin/;
+	use JSON;
+	use feature 'signatures';
+	no warnings 'experimental::signatures';
 
 	sub new($class, $api) {
-
-		my $ua=LWP::UserAgent->new();
-
-		#$ua->add_handler("request_send",  sub { shift->dump; return });
-		#$ua->add_handler("response_done", sub { shift->dump; return });
-
 		my $self = {
-			ua => $ua,
 			uri => $api->{uri},
-			limit => $api->{limit} // 100,
-			username => $api->{username},
-			password => $api->{password}
+			limit => $api->{limit} // 100
 		};
 
 		bless($self, $class);
 
+		$self->oauth2_refresh_token($api);
+
 		return $self;
+	}
+
+	sub oauth2_token_read($self) {
+		my $tokens=read_file("$Bin/.oauth2_tokens", err_mode => "quiet");
+		return $tokens // undef;
+	}
+
+	# Check if token authenticates against api and returns the right permissions
+	sub oauth2_token_valid($self, $api) {
+		my $r=$self->{oauth2}->get($api->{auth}{permissionuri});
+
+		return 0 if (!$r->is_success());
+
+		my $p=from_json($r->decoded_content());
+
+		return 0 if (!defined($p->{permissions}));
+
+		return 1 if (any { $_ =~ /write_notes/; } @{$p->{permissions}});
+
+		return 0;
+	}
+
+
+	sub oauth2_refresh_token($self, $api) {
+
+		my $tokens=$self->oauth2_token_read();
+
+		my $oauth2 = LWP::Authen::OAuth2->new(
+			client_id => $api->{auth}{clientid},
+			client_secret => $api->{auth}{clientsecret},
+			authorization_endpoint => $api->{auth}{authorizationuri},
+			token_endpoint => $api->{auth}{tokenuri},
+			redirect_uri => "https://localhost/noteisdue/authenticated",
+
+			# Optional hook, but recommended.
+			save_tokens => \&oauth2_save_tokens,
+			save_tokens_args => [ $self ],
+			scope => $api->{auth}{scope},
+
+			# This is for when you have tokens from last time.
+			token_string => $tokens
+		);
+
+		$self->{oauth2}=$oauth2;
+
+		if (defined($tokens)) {
+			if ($self->oauth2_token_valid($api)) {
+				printf("Token authentication is valid\n");
+				return;
+			}
+			return;
+		}
+
+		my $istty = -t STDIN && (-t STDOUT || !(-f STDOUT || -c STDOUT)) ;
+
+		if (!$istty) {
+			die("Cant refresh token noninteractively - please run in terminal");
+		}
+
+		# Interactively create token with user
+		printf("Authenticate at: %s\n", $oauth2->authorization_url());
+		printf("Enter url you got redirected to: ");
+		my $code=<STDIN>;
+		chomp($code);
+		$code=~s/^.*code=//;
+
+		$oauth2->request_tokens(code => $code);	
+
+		if (defined($oauth2->token_string)) {
+			printf("Got token: %s\n", $oauth2->token_string);
+		}
+	}
+
+	# Callback - reverted self/tokens
+	sub oauth2_save_tokens($tokens, $self) {
+		write_file("$Bin/.oauth2_tokens", $tokens);
 	}
 
 	sub fetch($self, $left, $bottom, $right, $top) {
@@ -102,10 +175,7 @@ package Notes::API;
 		my $uri=sprintf("%s/notes/?bbox=%f,%f,%f,%f&format=json&limit=%d",
 			$self->{uri}, $left, $bottom, $right, ${top}, $self->{limit});
 
-		my $request=GET $uri;
-		$request->authorization_basic($self->{username}, $self->{password});
-
-		my $response=$self->{ua}->request($request);
+		my $response=$self->{oauth2}->get($uri);
 
 		if (!$response->is_success()) {
 			return undef;
@@ -126,9 +196,7 @@ package Notes::API;
 		my $uri=sprintf("%s/notes/%d/close?text=%s",
 			$self->{uri}, $noteid, uri_encode($comment));
 
-		my $request=POST $uri;
-		$request->authorization_basic($self->{username}, $self->{password});
-		my $response=$self->{ua}->request($request);
+		my $response=$self->{oauth2}->post($uri);
 
 		if (!$response->is_success()) {
 			return undef;
@@ -141,9 +209,7 @@ package Notes::API;
 		my $uri=sprintf("%s/notes/%d/reopen",
 			$self->{uri}, $noteid);
 
-		my $request=POST $uri;
-		$request->authorization_basic($self->{username}, $self->{password});
-		my $response=$self->{ua}->request($request);
+		my $response=$self->{oauth}->post($uri);
 
 		if (!$response->is_success()) {
 			return undef;
@@ -156,9 +222,7 @@ package Notes::API;
 		my $uri=sprintf("%s/notes/%d/comment?text=%s",
 			$self->{uri}, $noteid, uri_encode($comment));
 
-		my $request=POST $uri;
-		$request->authorization_basic($self->{username}, $self->{password});
-		my $response=$self->{ua}->request($request);
+		my $response=$self->{oauth2}->post($uri);
 
 		if (!$response->is_success()) {
 			return undef;

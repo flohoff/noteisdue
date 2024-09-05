@@ -12,9 +12,16 @@
 	},
 	"users": [ "flohoff" ],
 	"api": {
-		"username": "<myosmusername>",
-		"password": "<myosmpassword>",
 		"uri": "https://api.openstreetmap.org/api/0.6",
-		"limit": 100
+		"limit": 100,
+		"auth": {
+			"authorizationuri": "https://www.openstreetmap.org/oauth2/authorize",
+			"tokenuri": "https://www.openstreetmap.org/oauth2/token",
+			"permissionuri": "https://api.openstreetmap.org/api/0.6/permissions.json",
+			"scope": [ "write_notes" ],
+			"clientid": "$clientid",
+			"clientsecret": "$clientsecret"
+		}
+
 	}
 }
