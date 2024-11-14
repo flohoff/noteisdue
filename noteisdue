@@ -209,7 +209,7 @@ package Notes::API;
 		my $uri=sprintf("%s/notes/%d/reopen",
 			$self->{uri}, $noteid);
 
-		my $response=$self->{oauth}->post($uri);
+		my $response=$self->{oauth2}->post($uri);
 
 		if (!$response->is_success()) {
 			return undef;
