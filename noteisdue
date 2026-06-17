@@ -368,8 +368,10 @@ sub updatefromapi($config, $a, $d) {
 			next if (!defined($user) || $user eq '');
 
 			# Allowed user list?
-			if (!scalar grep { $user eq $_ } @{$config->{users}}) {
-				next;
+			if (defined($config->{users})) {
+				if (!scalar grep { $user eq $_ } @{$config->{users}}) {
+					next;
+				}
 			}
 
 			my $text=$comment->text();
