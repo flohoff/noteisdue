@@ -13,6 +13,10 @@ There are currently these commands supported:
   Does not do anything when finding the notes comment but notifies
   with
   "User flohoff requested a notification"
+* autoclose <time spec>
+  Will automatically close the bug after time. Interesting for anonymous
+  notes you have fixed but want to give the Anonymous user the possibility
+  to read your answer.
 
 # Time spec format
 
