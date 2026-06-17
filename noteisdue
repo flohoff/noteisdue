@@ -361,6 +361,10 @@ sub updatefromapi($config, $a, $d) {
 		$config->{bbox}{right},
 		$config->{bbox}{top});
 
+	if (!defined($updates)) {
+		die("API Failed");
+	}
+
 	foreach my $update ( @{$updates} ) {
 		foreach my $comment ( $update->comments() ) {
 
