@@ -39,12 +39,11 @@ package Notes::Noteupdate;
 		return $self;
 	}
 
-	sub id($self) {
+	sub note_id($self) {
 		return $self->{properties}{id};
 	}
 
 	sub comments($self) {
-
 		return map { new Notes::Comment($_) } @{$self->{properties}{comments}};
 	}
 1;
@@ -317,7 +316,7 @@ package Notes::Database;
 	sub addnotenotify($self, $noteid, $reopentimestamp, $commenttimestamp, $user) {
 		if (noteexists($self, $noteid, $commenttimestamp)) {
 			printf("%20s Already in database\n", $noteid);
-			return 0;	
+			return 0;
 		}
 
 		my $sql=$self->{dbh}->prepare("insert into notes ( noteid, due, commenttimestamp, action, username) values ( ?, to_timestamp(?), to_timestamp(?), 'notify', ? )") || die $DBI::errstr;
@@ -326,6 +325,20 @@ package Notes::Database;
 
 		return $err // 0;
 	}
+
+	sub addnoteautoclose($self, $noteid, $autoclosetimestamp, $commenttimestamp, $user) {
+		if (noteexists($self, $noteid, $commenttimestamp)) {
+			printf("%20s Already in database\n", $noteid);
+			return 0;
+		}
+
+		my $sql=$self->{dbh}->prepare("insert into notes ( noteid, due, commenttimestamp, action, username) values ( ?, to_timestamp(?), to_timestamp(?), 'autoclose', ? )") || die $DBI::errstr;
+		my $err=$sql->execute($noteid, $autoclosetimestamp, $commenttimestamp, $user);
+		$sql->finish();
+
+		return $err // 0;
+	}
+
 
 	sub duenotes($self) {
 		my $sql=$self->{dbh}->prepare("select id, noteid, due, action, username from notes where reopened = false and due < 'now'::timestamp") || die $DBI::errstr;
@@ -355,6 +368,53 @@ use FindBin qw/$Bin/;
 use DBI;
 use POSIX qw/strftime/;
 
+sub note_process($config, $a, $d, $update, $comment) {
+	my $text=$comment->text();
+	next if (!defined($text));
+
+	my @lines=split(/\n/, $text);
+
+	# No comments - nothing to process
+	return if (scalar @lines == 0);
+
+	# Only process first line comments with these commands
+	if ($lines[0] !~ /(reopen|notify|autoclose):\s*(.+)$/) {
+		return;
+	}
+
+	my $action=$1;
+	my $datestring=$2;
+
+	my $dm=new Date::Manip::Date;
+	my $err=$dm->parse($datestring);
+
+	if ($err) {
+		printf("Could not parse note %s first line datestring: %s returned: %s\n", $update->note_id(), $datestring, $err);
+		return;
+	}
+
+	my $datespec=$dm->secs_since_1970_GMT();
+
+	$err=$dm->parse($comment->date());
+	my $commenttimestamp=$dm->secs_since_1970_GMT();
+
+	if ($action =~ /reopen/) {
+		printf("%20s found reopen %s %s\n", $update->note_id(), $datestring, $comment->date());
+		if ($d->addnotereopen($update->note_id(), $datespec, $commenttimestamp, $comment->user())) {
+			$a->note_close($update->id(), "Will be reopened per request of User %s", $comment->user());
+		}
+	} elsif ($action =~ /notify/) {
+		printf("%20s found notify %s %s\n", $update->note_id(), $datestring, $comment->date());
+		$d->addnotenotify($update->note_id(), $datespec, $commenttimestamp, $comment->user());
+	} elsif ($action =~ /autoclose/) {
+		printf("%20s found autoclose %s %s\n", $update->note_id(), $datestring, $comment->date());
+		$d->addnoteautoclose($update->note_id(), $datespec, $commenttimestamp, $comment->user());
+		$a->note_comment($update->note_id(), sprintf("Got autoclose for note per request of User %s", $comment->user()));
+	}
+
+	return;
+}
+
 sub updatefromapi($config, $a, $d) {
 	my $updates=$a->fetch(
 		$config->{bbox}{left},
@@ -379,47 +439,7 @@ sub updatefromapi($config, $a, $d) {
 				}
 			}
 
-			my $text=$comment->text();
-			next if (!defined($text));
-
-			my @lines=split(/\n/, $text);
-
-			# No comments - nothing to process
-			next if (scalar @lines == 0);
-
-			if ($lines[0] =~ /reopen:\s*(.+)$/) {
-				my $datestring=$1;
-				my $dm=new Date::Manip::Date;
-				my $err=$dm->parse($1);
-
-				next if ($err);
-
-				my $reopentimestamp=$dm->secs_since_1970_GMT();
-
-				$err=$dm->parse($comment->date());
-				my $commenttimestamp=$dm->secs_since_1970_GMT();
-
-				printf("%20s found reopen %s %s\n", $update->id(), $datestring, $comment->date());
-
-				if ($d->addnotereopen($update->id(), $reopentimestamp, $commenttimestamp, $user)) {
-					$a->note_close($update->id(), "Will be reopened");
-				}
-			} elsif ($lines[0] =~ /notify:\s*(.+)$/) {
-				my $datestring=$1;
-				my $dm=new Date::Manip::Date;
-				my $err=$dm->parse($1);
-
-				next if ($err);
-
-				my $reopentimestamp=$dm->secs_since_1970_GMT();
-
-				$err=$dm->parse($comment->date());
-				my $commenttimestamp=$dm->secs_since_1970_GMT();
-
-				printf("%20s found notify %s %s\n", $update->id(), $datestring, $comment->date());
-
-				$d->addnotenotify($update->id(), $reopentimestamp, $commenttimestamp, $user);
-			}
+			note_process($config, $a, $d, $update, $comment);
 		}
 	}
 }
@@ -433,8 +453,12 @@ sub actionifdue($config, $a, $d) {
 			$a->note_reopen($note->id());
 			$note->done();
 		} elsif ($note->action() eq 'notify') {
-			printf("%20s notify\n", $note->id());
+			printf("%20s Notify\n", $note->id());
 			$a->note_comment($note->id(), sprintf("User %s requested a notification", $note->username()));
+			$note->done();
+		} elsif ($note->action() eq 'autoclose') {
+			printf("%20s Autoclosing\n", $note->id());
+			$a->note_close($note->id(), "User %s requested autoclose - closeing", $note->username());
 			$note->done();
 		}
 	}
