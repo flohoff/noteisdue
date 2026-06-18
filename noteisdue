@@ -288,7 +288,7 @@ package Notes::Database::Note;
 			update	noteactions
 			set	lastcommenttimestamp = to_timestamp(?)
 			where	id = ?
-			and	done = f
+			and	done = false
 			and	lastcommenttimestamp < to_timestamp(?)") || die $DBI::errstr;
 		$sql->execute($commenttimestamp, $self->dbid(), $commenttimestamp);
 		$sql->finish();
