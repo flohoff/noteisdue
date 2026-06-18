@@ -4,9 +4,9 @@ use strict;
 
 package Notes::Comment;
 	use strict;
-        use feature 'signatures';
-        no warnings 'experimental::signatures';
-
+	use Date::Manip::Date;
+	use feature 'signatures';
+	no warnings 'experimental::signatures';
 
 	sub new($class, $update) {
 		my $self=$update;
@@ -16,6 +16,17 @@ package Notes::Comment;
 	
 	sub date($self) {
 		return $self->{date};
+	}
+
+	sub date_serial($self) {
+		my $dm=new Date::Manip::Date;
+		my $err=$dm->parse($self->date());
+		# We return 1.1.1970
+		if ($err) {
+			return 0;
+		}
+		my $serial=$dm->secs_since_1970_GMT();
+		return $serial;
 	}
 
 	sub user($self) {
@@ -41,6 +52,10 @@ package Notes::Noteupdate;
 
 	sub note_id($self) {
 		return $self->{properties}{id};
+	}
+
+	sub status($self) {
+		return $self->{properties}{status};
 	}
 
 	sub comments($self) {
@@ -233,6 +248,7 @@ package Notes::API;
 
 package Notes::Database::Note;
    	use strict;
+	use Data::Dumper;
         use feature 'signatures';
         no warnings 'experimental::signatures';
 
@@ -247,8 +263,8 @@ package Notes::Database::Note;
 		return $self;
 	}
 
-	sub id($self) {
-		return $self->{row}{noteid};
+	sub dbid($self) {
+		return $self->{row}{id};
 	}
 
 	sub action($self) {
@@ -260,10 +276,24 @@ package Notes::Database::Note;
 	}
 
 	sub done($self) {
-		my $sql=$self->{dbh}->prepare("update notes set done = true where id = ?");
-		$sql->execute($self->{row}{id});
+		print Dumper($self);
+		my $sql=$self->{dbh}->prepare("update notes set done = true where id = ?") || warn $DBI::errstr;
+		$sql->execute($self->dbid()) || warn $DBI::errstr;
 		$sql->finish();
 	}
+
+	sub lastcomment_update($self, $commenttimestamp) {
+		# Update lastcomment_update to latest comment timestamp
+		my $sql=$self->{dbh}->prepare("
+			update	notes
+			set	lastcommenttimestamp = to_timestamp(?)
+			where	id = ?
+			and	done = f
+			and	lastcommenttimestamp < to_timestamp(?)") || die $DBI::errstr;
+		$sql->execute($commenttimestamp, $self->dbid(), $commenttimestamp);
+		$sql->finish();
+	}
+
 1;
 
 package Notes::Database;
@@ -299,7 +329,6 @@ package Notes::Database;
 
 		return defined($row);
 	}
-
 	sub addnoteaction($self, $noteid, $commenttimestamp, $action, $actiontimestamp, $user) {
 		if (noteexists($self, $noteid, $commenttimestamp)) {
 			printf("%20s Already in database\n", $noteid);
@@ -328,9 +357,25 @@ package Notes::Database;
 		return $err // 0;
 	}
 
+	sub note_fetch_noteid($self, $noteid) {
+		my $sql=$self->{dbh}->prepare("
+			select	*
+			from	notes
+			where	noteid = ?") || die $DBI::errstr;
+		my $err=$sql->execute($noteid);
+
+		my @notes;
+		while(my $row=$sql->fetchrow_hashref()) {
+			push @notes, new Notes::Database::Note($self->{dbh}, $row);
+		}
+		$sql->finish();
+
+		return \@notes;
+	}
+
 	sub duenotes($self) {
 		my $sql=$self->{dbh}->prepare("
-			select	id, noteid, due, action, username
+			select	*
 			from	notes
 			where	done = false
 			and	due < 'now'::timestamp") || die $DBI::errstr;
@@ -360,9 +405,28 @@ use FindBin qw/$Bin/;
 use DBI;
 use POSIX qw/strftime/;
 
+# We want to track comments on notes we are waiting for
+sub note_process_noncommand($config, $a, $d, $update, $comment) {
+	my $notes=$d->note_fetch_noteid($update->note_id());
+
+	# We dont have any commands for this note
+	if (scalar @$notes == 0) {
+		return;
+	}
+
+	for my $note ( @$notes ) {
+		$note->lastcomment_update($comment->date_serial());
+	}
+}
+
 sub note_process($config, $a, $d, $update, $comment) {
 	my $text=$comment->text();
-	next if (!defined($text));
+	if (!defined($text)) {
+		printf("comment->text() is not defined\n");
+		print Dumper($comment);
+		print Dumper($update);
+		return;
+	}
 
 	my @lines=split(/\n/, $text);
 
@@ -371,6 +435,7 @@ sub note_process($config, $a, $d, $update, $comment) {
 
 	# Only process first line comments with these commands
 	if ($lines[0] !~ /(reopen|notify|autoclose):\s*(.+)$/) {
+		note_process_noncommand($config, $a, $d, $update, $comment);
 		return;
 	}
 
@@ -385,21 +450,17 @@ sub note_process($config, $a, $d, $update, $comment) {
 	}
 	my $datespec=$dm->secs_since_1970_GMT();
 
-
-	$err=$dm->parse($comment->date());
-	my $commenttimestamp=$dm->secs_since_1970_GMT();
-
 	if ($action =~ /reopen/) {
 		printf("%20s found reopen %s %s\n", $update->note_id(), $datestring, $comment->date());
-		if ($d->addnoteaction($update->note_id(), $commenttimestamp, "reopen", $datespec, $comment->user())) {
+		if ($d->addnoteaction($update->note_id(), $comment->date_serial(), "reopen", $datespec, $comment->user())) {
 			$a->note_close($update->id(), "Will be reopened per request of User %s", $comment->user());
 		}
 	} elsif ($action =~ /notify/) {
 		printf("%20s found notify %s %s\n", $update->note_id(), $datestring, $comment->date());
-		$d->addnoteaction($update->note_id(), $commenttimestamp, "notify", $datespec, $comment->user());
+		$d->addnoteaction($update->note_id(), $comment->date_serial(), "notify", $datespec, $comment->user());
 	} elsif ($action =~ /autoclose/) {
 		printf("%20s found autoclose %s %s\n", $update->note_id(), $datestring, $comment->date());
-		if ($d->addnoteaction($update->note_id(), $commenttimestamp, "autoclose", $datespec, $comment->user())) {
+		if ($d->addnoteaction($update->note_id(), $comment->date_serial(), "autoclose", $datespec, $comment->user())) {
 			$a->note_comment($update->note_id(), sprintf("Got autoclose for note per request of User %s", $comment->user()));
 		}
 	}

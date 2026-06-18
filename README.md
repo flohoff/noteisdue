@@ -40,8 +40,9 @@ The tool currently uses a postgres database for persisting note IDs and their du
 	    added timestamp without time zone DEFAULT now(),
 	    noteid integer NOT NULL,
 	    due timestamp without time zone NOT NULL,
-	    reopened boolean DEFAULT false,
-	    commenttimestamp timestamp without time zone NOT NULL
+	    done boolean DEFAULT false,
+	    commenttimestamp timestamp without time zone NOT NULL,
+	    lastcommenttimestamp timestamp without time zone NOT NULL,
 	    action character varying DEFAULT 'reopen'::character varying,
 	    username character varying
 	);
