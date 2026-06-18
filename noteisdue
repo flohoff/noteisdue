@@ -285,7 +285,7 @@ package Notes::Database::Note;
 	sub lastcomment_update($self, $commenttimestamp) {
 		# Update lastcomment_update to latest comment timestamp
 		my $sql=$self->{dbh}->prepare("
-			update	notes
+			update	noteactions
 			set	lastcommenttimestamp = to_timestamp(?)
 			where	id = ?
 			and	done = f
@@ -322,7 +322,7 @@ package Notes::Database;
 	}
 
 	sub noteexists($self, $noteid, $commenttimestamp) {
-		my $sql=$self->{dbh}->prepare("select id from notes where noteid = ? and commenttimestamp = to_timestamp(?)") || die $DBI::errstr;
+		my $sql=$self->{dbh}->prepare("select id from noteactions where noteid = ? and commenttimestamp = to_timestamp(?)") || die $DBI::errstr;
 		$sql->execute($noteid, $commenttimestamp);
 		my $row=$sql->fetchrow();
 		$sql->finish();
@@ -336,7 +336,7 @@ package Notes::Database;
 		}
 
 		my $sql=$self->{dbh}->prepare("
-			insert into notes (
+			insert into noteactions (
 				noteid,
 				due,
 				commenttimestamp,
@@ -360,7 +360,7 @@ package Notes::Database;
 	sub note_fetch_noteid($self, $noteid) {
 		my $sql=$self->{dbh}->prepare("
 			select	*
-			from	notes
+			from	noteactions
 			where	noteid = ?") || die $DBI::errstr;
 		my $err=$sql->execute($noteid);
 
@@ -376,7 +376,7 @@ package Notes::Database;
 	sub duenotes($self) {
 		my $sql=$self->{dbh}->prepare("
 			select	*
-			from	notes
+			from	noteactions
 			where	done = false
 			and	due < 'now'::timestamp") || die $DBI::errstr;
 		my $err=$sql->execute();

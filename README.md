@@ -35,7 +35,7 @@ and the like.
 
 The tool currently uses a postgres database for persisting note IDs and their due timestamp:
 
-	CREATE TABLE public.notes (
+	CREATE TABLE public.noteactions (
 	    id integer NOT NULL,
 	    added timestamp without time zone DEFAULT now(),
 	    noteid integer NOT NULL,
@@ -47,8 +47,8 @@ The tool currently uses a postgres database for persisting note IDs and their du
 	    username character varying
 	);
 
-	ALTER TABLE ONLY public.notes
-	    ADD CONSTRAINT unique_notes_id_commenttimestamp UNIQUE (noteid, commenttimestamp);
+	ALTER TABLE ONLY public.noteactions
+	    ADD CONSTRAINT unique_noteactions_id_commenttimestamp UNIQUE (noteid, commenttimestamp);
 
 # Authorization
 
