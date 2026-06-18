@@ -260,7 +260,7 @@ package Notes::Database::Note;
 	}
 
 	sub done($self) {
-		my $sql=$self->{dbh}->prepare("update notes set reopened = true where id = ?");
+		my $sql=$self->{dbh}->prepare("update notes set done = true where id = ?");
 		$sql->execute($self->{row}{id});
 		$sql->finish();
 	}
@@ -300,48 +300,40 @@ package Notes::Database;
 		return defined($row);
 	}
 
-	sub addnotereopen($self, $noteid, $reopentimestamp, $commenttimestamp, $user) {
+	sub addnoteaction($self, $noteid, $commenttimestamp, $action, $actiontimestamp, $user) {
 		if (noteexists($self, $noteid, $commenttimestamp)) {
 			printf("%20s Already in database\n", $noteid);
 			return 0;	
 		}
 
-		my $sql=$self->{dbh}->prepare("insert into notes ( noteid, due, commenttimestamp, action, username) values ( ?, to_timestamp(?), to_timestamp(?), 'reopen', ? )") || die $DBI::errstr;
-		my $err=$sql->execute($noteid, $reopentimestamp, $commenttimestamp, $user);
+		my $sql=$self->{dbh}->prepare("
+			insert into notes (
+				noteid,
+				due,
+				commenttimestamp,
+				lastcommenttimestamp,
+				action,
+				username)
+			values ( ?, to_timestamp(?), to_timestamp(?), to_timestamp(?), ?, ?)") || die $DBI::errstr;
+
+		my $err=$sql->execute(
+			$noteid,
+			$actiontimestamp,
+			$commenttimestamp,
+			$commenttimestamp,
+			$action,
+			$user);
 		$sql->finish();
 
 		return $err // 0;
 	}
-
-	sub addnotenotify($self, $noteid, $reopentimestamp, $commenttimestamp, $user) {
-		if (noteexists($self, $noteid, $commenttimestamp)) {
-			printf("%20s Already in database\n", $noteid);
-			return 0;
-		}
-
-		my $sql=$self->{dbh}->prepare("insert into notes ( noteid, due, commenttimestamp, action, username) values ( ?, to_timestamp(?), to_timestamp(?), 'notify', ? )") || die $DBI::errstr;
-		my $err=$sql->execute($noteid, $reopentimestamp, $commenttimestamp, $user);
-		$sql->finish();
-
-		return $err // 0;
-	}
-
-	sub addnoteautoclose($self, $noteid, $autoclosetimestamp, $commenttimestamp, $user) {
-		if (noteexists($self, $noteid, $commenttimestamp)) {
-			printf("%20s Already in database\n", $noteid);
-			return 0;
-		}
-
-		my $sql=$self->{dbh}->prepare("insert into notes ( noteid, due, commenttimestamp, action, username) values ( ?, to_timestamp(?), to_timestamp(?), 'autoclose', ? )") || die $DBI::errstr;
-		my $err=$sql->execute($noteid, $autoclosetimestamp, $commenttimestamp, $user);
-		$sql->finish();
-
-		return $err // 0;
-	}
-
 
 	sub duenotes($self) {
-		my $sql=$self->{dbh}->prepare("select id, noteid, due, action, username from notes where reopened = false and due < 'now'::timestamp") || die $DBI::errstr;
+		my $sql=$self->{dbh}->prepare("
+			select	id, noteid, due, action, username
+			from	notes
+			where	done = false
+			and	due < 'now'::timestamp") || die $DBI::errstr;
 		my $err=$sql->execute();
 
 		my @notes;
@@ -387,29 +379,29 @@ sub note_process($config, $a, $d, $update, $comment) {
 
 	my $dm=new Date::Manip::Date;
 	my $err=$dm->parse($datestring);
-
 	if ($err) {
 		printf("Could not parse note %s first line datestring: %s returned: %s\n", $update->note_id(), $datestring, $err);
 		return;
 	}
-
 	my $datespec=$dm->secs_since_1970_GMT();
+
 
 	$err=$dm->parse($comment->date());
 	my $commenttimestamp=$dm->secs_since_1970_GMT();
 
 	if ($action =~ /reopen/) {
 		printf("%20s found reopen %s %s\n", $update->note_id(), $datestring, $comment->date());
-		if ($d->addnotereopen($update->note_id(), $datespec, $commenttimestamp, $comment->user())) {
+		if ($d->addnoteaction($update->note_id(), $commenttimestamp, "reopen", $datespec, $comment->user())) {
 			$a->note_close($update->id(), "Will be reopened per request of User %s", $comment->user());
 		}
 	} elsif ($action =~ /notify/) {
 		printf("%20s found notify %s %s\n", $update->note_id(), $datestring, $comment->date());
-		$d->addnotenotify($update->note_id(), $datespec, $commenttimestamp, $comment->user());
+		$d->addnoteaction($update->note_id(), $commenttimestamp, "notify", $datespec, $comment->user());
 	} elsif ($action =~ /autoclose/) {
 		printf("%20s found autoclose %s %s\n", $update->note_id(), $datestring, $comment->date());
-		$d->addnoteautoclose($update->note_id(), $datespec, $commenttimestamp, $comment->user());
-		$a->note_comment($update->note_id(), sprintf("Got autoclose for note per request of User %s", $comment->user()));
+		if ($d->addnoteaction($update->note_id(), $commenttimestamp, "autoclose", $datespec, $comment->user())) {
+			$a->note_comment($update->note_id(), sprintf("Got autoclose for note per request of User %s", $comment->user()));
+		}
 	}
 
 	return;
@@ -425,6 +417,8 @@ sub updatefromapi($config, $a, $d) {
 	if (!defined($updates)) {
 		die("API Failed");
 	}
+
+	printf("Processing notes from API\n");
 
 	foreach my $update ( @{$updates} ) {
 		foreach my $comment ( $update->comments() ) {
@@ -445,9 +439,11 @@ sub updatefromapi($config, $a, $d) {
 }
 
 sub actionifdue($config, $a, $d) {
-	my $notes=$d->duenotes();
+	my $dbnotes=$d->duenotes();
 
-	foreach my $note ( @{$notes} ) {
+	printf("Processing due notes from database\n");
+
+	foreach my $note ( @{$dbnotes} ) {
 		if ($note->action() eq 'reopen') {
 			printf("%20s Reopening\n", $note->id());
 			$a->note_reopen($note->id());
@@ -458,7 +454,7 @@ sub actionifdue($config, $a, $d) {
 			$note->done();
 		} elsif ($note->action() eq 'autoclose') {
 			printf("%20s Autoclosing\n", $note->id());
-			$a->note_close($note->id(), "User %s requested autoclose - closeing", $note->username());
+			$a->note_close($note->id(), sprintf("User %s requested autoclose - closeing", $note->username()));
 			$note->done();
 		}
 	}
