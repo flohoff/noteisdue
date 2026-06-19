@@ -267,6 +267,10 @@ package Notes::Database::Note;
 		return $self->{row}{id};
 	}
 
+	sub noteid($self) {
+		return $self->{row}{noteid};
+	}
+
 	sub action($self) {
 		return $self->{row}{action};
 	}
@@ -276,8 +280,7 @@ package Notes::Database::Note;
 	}
 
 	sub done($self) {
-		print Dumper($self);
-		my $sql=$self->{dbh}->prepare("update notes set done = true where id = ?") || warn $DBI::errstr;
+		my $sql=$self->{dbh}->prepare("update noteactions set done = true where id = ?") || warn $DBI::errstr;
 		$sql->execute($self->dbid()) || warn $DBI::errstr;
 		$sql->finish();
 	}
@@ -504,19 +507,19 @@ sub actionifdue($config, $a, $d) {
 
 	printf("Processing due notes from database\n");
 
-	foreach my $note ( @{$dbnotes} ) {
-		if ($note->action() eq 'reopen') {
-			printf("%20s Reopening\n", $note->id());
-			$a->note_reopen($note->id());
-			$note->done();
-		} elsif ($note->action() eq 'notify') {
-			printf("%20s Notify\n", $note->id());
-			$a->note_comment($note->id(), sprintf("User %s requested a notification", $note->username()));
-			$note->done();
-		} elsif ($note->action() eq 'autoclose') {
-			printf("%20s Autoclosing\n", $note->id());
-			$a->note_close($note->id(), sprintf("User %s requested autoclose - closeing", $note->username()));
-			$note->done();
+	foreach my $dbnote ( @{$dbnotes} ) {
+		if ($dbnote->action() eq 'reopen') {
+			printf("%20s Reopening\n", $dbnote->noteid());
+			$a->note_reopen($dbnote->noteid());
+			$dbnote->done();
+		} elsif ($dbnote->action() eq 'notify') {
+			printf("%20s Notify\n", $dbnote->noteid());
+			$a->note_comment($dbnote->noteid(), sprintf("User %s requested a notification", $dbnote->username()));
+			$dbnote->done();
+		} elsif ($dbnote->action() eq 'autoclose') {
+			printf("%20s Autoclosing\n", $dbnote->noteid());
+			$a->note_close($dbnote->noteid(), sprintf("User %s requested autoclose - closeing", $dbnote->username()));
+			$dbnote->done();
 		}
 	}
 }
