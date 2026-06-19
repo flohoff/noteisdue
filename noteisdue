@@ -456,7 +456,7 @@ sub note_process($config, $a, $d, $update, $comment) {
 	if ($action =~ /reopen/) {
 		printf("%20s found reopen %s %s\n", $update->note_id(), $datestring, $comment->date());
 		if ($d->addnoteaction($update->note_id(), $comment->date_serial(), "reopen", $datespec, $comment->user())) {
-			$a->note_close($update->id(), "Will be reopened per request of User %s", $comment->user());
+			$a->note_close($update->note_id(), sprintf("Will be reopened per request of User %s", $comment->user()));
 		}
 	} elsif ($action =~ /notify/) {
 		printf("%20s found notify %s %s\n", $update->note_id(), $datestring, $comment->date());
