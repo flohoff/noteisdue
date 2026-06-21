@@ -445,6 +445,9 @@ sub note_process($config, $a, $d, $update, $comment) {
 	my $action=$1;
 	my $datestring=$2;
 
+	# Remove stray characters at the end. People tend to use them.
+	$datestring=~s/[,.\/;:#-]$//g;
+
 	my $dm=new Date::Manip::Date;
 	my $err=$dm->parse($datestring);
 	if ($err) {
