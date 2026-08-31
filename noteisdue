@@ -73,6 +73,7 @@ package Notes::API;
 	use File::Slurp qw/read_file write_file/;
 	use List::Util qw/any/;
 	use FindBin qw/$Bin/;
+	use POSIX qw/strftime/;
 	use JSON;
 	use feature 'signatures';
 	no warnings 'experimental::signatures';
@@ -166,31 +167,15 @@ package Notes::API;
 		write_file("$Bin/.oauth2_tokens", $tokens);
 	}
 
-	sub fetch($self, $left, $bottom, $right, $top, $count) {
-		my $area=($top-$bottom)*($right-$left);
+	sub fetch_by_search($self, $count, $since) {
+		my $from=strftime("%Y-%m-%dT%02H:%02M:%02S", gmtime($since));	
+		# https://api.openstreetmap.org/api/0.6/notes/search?closed=0&from=2026-08-29T10:20:00&format=json&limit=1000
 
+		my $uri=sprintf("%s/notes/search?closed=0&from=%s&format=json&limit=%d",
+			$self->{uri}, $from, $self->{limit});
 
-		# If the area is to large split it down
-		if ($area > 25) {
-			my $xmid=$left+($right-$left)/2;
-			my $ymid=$bottom+($top-$bottom)/2;
-
-			$count=$count*4;
-
-			my @notes;
-
-			push @notes, @{$self->fetch($left, $ymid, $xmid, $top, $count)};
-			push @notes, @{$self->fetch($xmid, $ymid, $right, $top, $count-1)};
-			push @notes, @{$self->fetch($left, $bottom, $xmid, $ymid, $count-2)};
-			push @notes, @{$self->fetch($xmid, $bottom, $right, $ymid, $count-3)};
-
-			return \@notes;
-		}
-
-		printf("Fetching notes in bbox %f, %f, %f, %f area %f (%d)\n", $left, $bottom, $right, $top, $area, $count);
-
-		my $uri=sprintf("%s/notes/?bbox=%f,%f,%f,%f&format=json&limit=%d",
-			$self->{uri}, $left, $bottom, $right, ${top}, $self->{limit});
+		printf("Fetching note updates since %s with\n\t%s\n",
+			$from, $uri);
 
 		my $response=$self->{oauth2}->get($uri);
 
@@ -202,12 +187,10 @@ package Notes::API;
 
 		my @updates=map { new Notes::Noteupdate($_) } @{$data->{features}};
 
-		printf("Fetched %d notes in bbox %f, %f, %f, %f area %f\n", scalar @updates, $left, $bottom, $right, $top, $area);
+		printf("Got %d number of updates\n", scalar @updates);
 
 		return \@updates;
 	}
-
-	use URI::Encode;
 
 	sub note_close($self, $noteid, $comment) {
 		my $uri=sprintf("%s/notes/%d/close?text=%s",
@@ -397,6 +380,43 @@ package Notes::Database;
 		return \@notes;
 	}
 
+	sub state_get($self, $key) {
+		my $sql=$self->{dbh}->prepare("
+			select	value
+			from	state
+			where	key = ?
+			") || die $DBI::errstr;
+
+		$sql->execute($key) || warn $DBI::errstr;
+		my $row=$sql->fetchrow_hashref();
+		my $value=(defined($row)) ? $row->{value} : undef;
+		$sql->finish();
+
+		return $value;
+	}
+
+	sub state_del($self, $key) {
+		my $sql=$self->{dbh}->prepare("
+			delete	from state
+			where	key = ?
+			") || die $DBI::errstr;
+
+		$sql->execute($key) || warn $DBI::errstr;
+		$sql->finish();
+	}
+
+	sub state_set($self, $key, $value) {
+
+		$self->state_del($key);
+
+		my $sql=$self->{dbh}->prepare("
+			insert	into state ( key, value ) values ( ?, ?)
+			") || die $DBI::errstr;
+
+		$sql->execute($key, $value) || warn $DBI::errstr;
+		$sql->finish();
+	}
+
 
 1;
 
@@ -477,12 +497,8 @@ sub note_process($config, $a, $d, $update, $comment) {
 	return;
 }
 
-sub updatefromapi($config, $a, $d) {
-	my $updates=$a->fetch(
-		$config->{bbox}{left},
-		$config->{bbox}{bottom},
-		$config->{bbox}{right},
-		$config->{bbox}{top}, 1);
+sub updatefromapi($config, $a, $d, $lastrun) {
+	my $updates=$a->fetch_by_search(1000, $lastrun);
 
 	if (!defined($updates)) {
 		die("API Failed");
@@ -539,11 +555,17 @@ my ($opt, $usage) = describe_options(
 
 my $config=from_json(read_file($opt->configfile));
 
-my $a=new Notes::API($config->{api});
 my $d=new Notes::Database($config->{dbconfig});
 
-updatefromapi($config, $a, $d);
+my $now=time();
+my $lastrun=$d->state_get("lastrun") // $now;
+
+my $a=new Notes::API($config->{api});
+
+updatefromapi($config, $a, $d, $lastrun);
 actionifdue($config, $a, $d);
+
+$d->state_set("lastrun", $now);
 
 if (defined($config->{touchfile})) {
 	write_file($config->{touchfile}, strftime("%Y-%m-%dT%H:%M:%S", localtime(time())));	
