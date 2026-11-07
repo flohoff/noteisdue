@@ -33,8 +33,8 @@ There are currently these commands supported:
 relative timespecs as 
 
 	next month
-        tomorrow
-        2 hours
+	tomorrow
+	2 hours
 	3 months
 	3 weeks
 	24 hours
