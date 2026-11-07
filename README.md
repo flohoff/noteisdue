@@ -1,8 +1,12 @@
 
 # Purpose
 
-Notes do not support notification or reopening after time. So this
+Notes do not support notification, reopening or autoclosing after time. So this
 bot does it.
+
+* It does not react on anonymous users notes
+* Everytime it changes its internal state e.g. creates an action or
+  cancels it, it will comment on the note
 
 There are currently these commands supported:
 
@@ -10,13 +14,18 @@ There are currently these commands supported:
   Closes the note on the next run with a message that it will be reopened.
   Reopens the note when the timespec has been reached.
 * notify: <time spec>
-  Does not do anything when finding the notes comment but notifies
-  with
-  "User flohoff requested a notification"
+  Notifies within the note with: "User flohoff requested a notification"
 * autoclose <time spec>
-  Will automatically close the bug after time. Interesting for anonymous
-  notes you have fixed but want to give the Anonymous user the possibility
-  to read your answer.
+  Will automatically close the bug after time.
+
+# Corner cases
+
+- If a note with "reopen" action is reopened by someone else 
+  Action should be canceled and a comment beeing written
+- If someone comments on an "autoclose" marked note it
+  should cancel the autoclose with a comment
+- When there is a notification of User A and User B requests a notification
+  aswell - What should happen?
 
 # Time spec format
 
@@ -24,6 +33,8 @@ There are currently these commands supported:
 relative timespecs as 
 
 	next month
+        tomorrow
+        2 hours
 	3 months
 	3 weeks
 	24 hours
@@ -55,5 +66,4 @@ The tool currently uses a postgres database for persisting note IDs and their du
 As `noteisdue` needs to use OAuth2 on first invocation noteisdue will present the authorization the user
 needs to open. After granting the authorization the user needs to copy the uri from the browser back to
 noteisdue.
-
 
