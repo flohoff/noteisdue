@@ -61,6 +61,10 @@ package Notes::Noteupdate;
 	sub comments($self) {
 		return map { new Notes::Comment($_) } @{$self->{properties}{comments}};
 	}
+
+	sub date_created($self) {
+		return $self->{properties}{date_created};
+	}
 1;
 
 package Notes::API;
@@ -81,7 +85,8 @@ package Notes::API;
 	sub new($class, $api) {
 		my $self = {
 			uri => $api->{uri},
-			limit => $api->{limit} // 100
+			limit => $api->{limit} // 100,
+			timeoverlap => $api->{timeoverlap} // 0
 		};
 
 		bless($self, $class);
@@ -168,10 +173,12 @@ package Notes::API;
 	}
 
 	sub fetch_by_search($self, $count, $since) {
-		my $from=strftime("%Y-%m-%dT%02H:%02M:%02S", gmtime($since));	
+		my $overlaptime=$since-$self->{timeoverlap};
+		my $from=strftime("%Y-%m-%dT%02H:%02M:%02SZ", gmtime($overlaptime));	
 		# https://api.openstreetmap.org/api/0.6/notes/search?closed=0&from=2026-08-29T10:20:00&format=json&limit=1000
 
-		my $uri=sprintf("%s/notes/search?closed=0&from=%s&format=json&limit=%d",
+		# https://github.com/openstreetmap/openstreetmap-website/issues/7492
+		my $uri=sprintf("%s/notes/search?closed=0&from=%s&format=json&limit=%d&sort=updated_at",
 			$self->{uri}, $from, $self->{limit});
 
 		printf("Fetching note updates since %s with\n\t%s\n",
@@ -451,16 +458,21 @@ sub note_process($config, $a, $d, $update, $comment) {
 		printf("comment->text() is not defined\n");
 		print Dumper($comment);
 		print Dumper($update);
+		printf("\tComment is null\n");
 		return;
 	}
 
 	my @lines=split(/\n/, $text);
 
 	# No comments - nothing to process
-	return if (scalar @lines == 0);
+	if (scalar @lines == 0) {
+		printf("\tEmpty comment\n");
+		return;
+	}
 
 	# Only process first line comments with these commands
 	if ($lines[0] !~ /(reopen|notify|autoclose):\s*(.+)$/) {
+		printf("\tNo command found in first line: %s\n", substr($lines[0], 0, 20));
 		note_process_noncommand($config, $a, $d, $update, $comment);
 		return;
 	}
@@ -480,15 +492,16 @@ sub note_process($config, $a, $d, $update, $comment) {
 	my $datespec=$dm->secs_since_1970_GMT();
 
 	if ($action =~ /reopen/) {
-		printf("%20s found reopen %s %s\n", $update->note_id(), $datestring, $comment->date());
+		printf("\t%20s found reopen %s %s\n", $update->note_id(), $datestring, $comment->date());
 		if ($d->addnoteaction($update->note_id(), $comment->date_serial(), "reopen", $datespec, $comment->user())) {
 			$a->note_close($update->note_id(), sprintf("Will be reopened per request of User %s", $comment->user()));
 		}
 	} elsif ($action =~ /notify/) {
-		printf("%20s found notify %s %s\n", $update->note_id(), $datestring, $comment->date());
+		printf("\t%20s found notify %s %s\n", $update->note_id(), $datestring, $comment->date());
 		$d->addnoteaction($update->note_id(), $comment->date_serial(), "notify", $datespec, $comment->user());
+		$a->note_comment($update->note_id(), sprintf("Got notify for note per request of User %s", $comment->user()));
 	} elsif ($action =~ /autoclose/) {
-		printf("%20s found autoclose %s %s\n", $update->note_id(), $datestring, $comment->date());
+		printf("\t%20s found autoclose %s %s\n", $update->note_id(), $datestring, $comment->date());
 		if ($d->addnoteaction($update->note_id(), $comment->date_serial(), "autoclose", $datespec, $comment->user())) {
 			$a->note_comment($update->note_id(), sprintf("Got autoclose for note per request of User %s", $comment->user()));
 		}
@@ -508,6 +521,11 @@ sub updatefromapi($config, $a, $d, $lastrun) {
 
 	foreach my $update ( @{$updates} ) {
 		foreach my $comment ( $update->comments() ) {
+
+			printf("Found update on note https://www.openstreetmap.org/note/%d - user %s\n",
+				$update->note_id(), $comment->user() // 'n/a');
+			printf("\tComment update: %s\n", $comment->date());
+			printf("\tNote created: %s\n", $update->date_created());
 
 			my $user=$comment->user();
 			next if (!defined($user) || $user eq '');
@@ -549,6 +567,7 @@ sub actionifdue($config, $a, $d) {
 my ($opt, $usage) = describe_options(
 	'$Bin %o <some-arg>',
 	[ 'configfile=s',	"Config filename", { default => "noteisdueconfig.json" } ],
+	[ 'starttime=s',	"Start fetching from time" ],
 	[],
 	[ 'help',               "print usage message and exit", { shortcircuit => 1 } ],
 );
@@ -559,6 +578,15 @@ my $d=new Notes::Database($config->{dbconfig});
 
 my $now=time();
 my $lastrun=$d->state_get("lastrun") // $now;
+
+if ($opt->starttime) {
+	my $dm=new Date::Manip::Date;
+	my $err=$dm->parse($opt->starttime);
+	if ($err) {
+		die("Could not parse starttime " . $opt->starttime);
+	}
+	$lastrun=$dm->secs_since_1970_GMT();
+}
 
 my $a=new Notes::API($config->{api});
 
