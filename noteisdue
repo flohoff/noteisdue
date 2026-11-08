@@ -194,7 +194,7 @@ package Notes::API;
 
 		my @updates=map { new Notes::Noteupdate($_) } @{$data->{features}};
 
-		printf("Got %d number of updates\n", scalar @updates);
+		printf("Got %d updates\n", scalar @updates);
 
 		return \@updates;
 	}
