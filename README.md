@@ -10,12 +10,12 @@ bot does it.
 
 There are currently these commands supported:
 
-* reopen: `<time spec>`
+* `reopen: <time spec>`
   Closes the note on the next run with a message that it will be reopened.
   Reopens the note when the timespec has been reached.
-* notify: `<time spec>`
+* `notify: <time spec>`
   Notifies within the note with: "User flohoff requested a notification"
-* autoclose: `<time spec>`
+* `autoclose: <time spec>`
   Will automatically close the bug after time.
 
 # Corner cases
