@@ -491,17 +491,17 @@ sub note_process($config, $a, $d, $update, $comment) {
 	}
 	my $datespec=$dm->secs_since_1970_GMT();
 
-	if ($action =~ /reopen/) {
+	if ($action =~ /reopen/i) {
 		printf("\t%20s found reopen %s %s\n", $update->note_id(), $datestring, $comment->date());
 		if ($d->addnoteaction($update->note_id(), $comment->date_serial(), "reopen", $datespec, $comment->user())) {
 			$a->note_close($update->note_id(), sprintf("Will be reopened per request of User %s", $comment->user()));
 		}
-	} elsif ($action =~ /notify/) {
+	} elsif ($action =~ /notify/i) {
 		printf("\t%20s found notify %s %s\n", $update->note_id(), $datestring, $comment->date());
 		if ($d->addnoteaction($update->note_id(), $comment->date_serial(), "notify", $datespec, $comment->user())) {
 			$a->note_comment($update->note_id(), sprintf("Got notify for note per request of User %s", $comment->user()));
 		}
-	} elsif ($action =~ /autoclose/) {
+	} elsif ($action =~ /autoclose/i) {
 		printf("\t%20s found autoclose %s %s\n", $update->note_id(), $datestring, $comment->date());
 		if ($d->addnoteaction($update->note_id(), $comment->date_serial(), "autoclose", $datespec, $comment->user())) {
 			$a->note_comment($update->note_id(), sprintf("Got autoclose for note per request of User %s", $comment->user()));
