@@ -471,7 +471,7 @@ sub note_process($config, $a, $d, $update, $comment) {
 	}
 
 	# Only process first line comments with these commands
-	if ($lines[0] !~ /^(reopen|notify|autoclose)\:\s*(.+)$/) {
+	if ($lines[0] !~ /^(reopen|notify|autoclose)\:\s*(.+)$/i) {
 		printf("\tNo command found in first line: %s\n", substr($lines[0], 0, 20));
 		note_process_noncommand($config, $a, $d, $update, $comment);
 		return;
