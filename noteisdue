@@ -429,6 +429,8 @@ package Notes::Database;
 
 use strict;
 use feature 'signatures';
+use open IO => ":encoding(utf-8)";
+use open ':std';
 use Data::Dumper;
 use Getopt::Long::Descriptive;
 use File::Slurp;
