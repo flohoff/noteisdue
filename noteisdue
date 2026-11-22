@@ -107,7 +107,7 @@ package Notes::API;
 
 		return 0 if (!$r->is_success());
 
-		my $p=from_json($r->decoded_content());
+		my $p=decode_json($r->content());
 
 		return 0 if (!defined($p->{permissions}));
 
@@ -190,7 +190,7 @@ package Notes::API;
 			return undef;
 		}
 
-		my $data=from_json($response->decoded_content);
+		my $data=decode_json($response->content);
 
 		my @updates=map { new Notes::Noteupdate($_) } @{$data->{features}};
 
